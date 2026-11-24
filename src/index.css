@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --ivory: #fbfbf6;
+  --stone: #f2f1ea;
+  --ink: #1a1b19;
+  --muted: #6c6e6a;
+  --charcoal: #212220;
+  --gold: #eab308;
+  --gold-soft: #fceab6;
+  --leaf: #84cc16;
+  --leaf-dark: #4d7c0f;
+  --leaf-soft: #d9f99d;
+  --leaf-mint: #e8f7d4;
+  --line: #e7e6de;
+}
+
+html {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--ivory);
+  color: var(--ink);
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
+}
+
+.font-serif-accent {
+  font-family: 'Instrument Serif', Georgia, serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+::selection {
+  background: rgba(132, 204, 22, 0.28);
+  color: #1a1b19;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f2f1ea;
+}
+::-webkit-scrollbar-thumb {
+  background: #c7d1ba;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #84cc16;
+}
+
+/* ---------- Animated dashed flow (map polygons / workflow line) ---------- */
+@keyframes dashFlow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+.dash-flow {
+  animation: dashFlow 1.6s linear infinite;
+}
+
+/* ---------- Satellite scan sweep ---------- */
+@keyframes scanSweep {
+  0% {
+    top: -16%;
+  }
+  100% {
+    top: 106%;
+  }
+}
+.scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -16%;
+  height: 15%;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(132, 204, 22, 0) 0%,
+    rgba(132, 204, 22, 0.08) 55%,
+    rgba(163, 230, 53, 0.24) 96%,
+    rgba(217, 249, 157, 0.6) 100%
+  );
+  border-bottom: 1.5px solid rgba(217, 249, 157, 0.72);
+  box-shadow: 0 10px 28px rgba(132, 204, 22, 0.22);
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+.burns-in .scanline {
+  opacity: 1;
+  animation: scanSweep 7.5s linear 1.2s infinite;
+}
+
+/* ---------- Burn-risk hotspot dots ---------- */
+@keyframes burnDotIn {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  to {
+    opacity: var(--o, 0.9);
+    transform: scale(1);
+  }
+}
+.burn-dot {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.burns-in .burn-dot {
+  animation: burnDotIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes burnGlowPulse {
+  0%,
+  100% {
+    opacity: 0.24;
+  }
+  50% {
+    opacity: 0.48;
+  }
+}
+.burn-glow {
+  opacity: 0;
+  transition: opacity 1.3s ease 0.4s;
+}
+.burns-in .burn-glow {
+  opacity: 0.34;
+  animation: burnGlowPulse 3.2s ease-in-out 2s infinite;
+}
+
+/* ---------- Range slider (Residue Estimator) ---------- */
+input[type='range'].pc-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    #65a30d var(--fill, 50%),
+    #e5e4dc var(--fill, 50%)
+  );
+  outline: none;
+}
+input[type='range'].pc-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #a3e635;
+  border: 3px solid #1a1b19;
+  box-shadow: 0 3px 10px rgba(26, 27, 25, 0.22);
+  cursor: pointer;
+}
+input[type='range'].pc-range::-moz-range-thumb {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #a3e635;
+  border: 3px solid #1a1b19;
+  cursor: pointer;
+}
