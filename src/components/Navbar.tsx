@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { id: 'hero', label: 'Overview', href: '#hero' },
   { id: 'estimator', label: 'Estimator', href: '#estimator' },
   { id: 'map', label: 'Field Intelligence', href: '#map' },
+  { id: 'requests', label: 'Requests', href: '#requests' },
   { id: 'machinery', label: 'Machinery', href: '#machinery' },
   { id: 'how', label: 'How it works', href: '#how' },
 ];

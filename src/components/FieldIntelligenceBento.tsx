@@ -11,25 +11,29 @@ import {
 import {
   SATELLITE_IMAGE,
   EDITORIAL_IMAGES,
-  FIELDS,
   VILLAGES,
   STATUS_META,
   URGENCY_META,
   CROPS,
   STACKED_HORIZON_BARS,
-  COMPARISON_METRICS,
-  CUMULATIVE_SERIES,
   Field,
   FieldStatus,
   Crop,
 } from '../data/paralicycleData';
+import { CollectionSchedule, RecoveryRequest } from '../types/paralicycle';
 
 interface FieldIntelligenceBentoProps {
+  fields: Field[];
+  requests: RecoveryRequest[];
+  optimisedSchedule: CollectionSchedule;
+  baselineSchedule: CollectionSchedule;
   onRequestPickup: (prefill?: {
     village?: string;
     crop?: Crop;
     area?: number;
     estimateT?: number;
+    harvest?: string;
+    pickup?: string;
   }) => void;
 }
 
@@ -108,17 +112,16 @@ const PAD_L = 38;
 const PAD_R = 46;
 const PAD_T = 14;
 const PAD_B = 26;
-const MAX_V = 7450;
 const xAt = (i: number, n: number) => PAD_L + (i * (W - PAD_L - PAD_R)) / (n - 1);
-const yAt = (v: number) => H - PAD_B - (v / MAX_V) * (H - PAD_T - PAD_B);
-function buildLine(series: number[]) {
-  return 'M ' + series.map((v, i) => `${xAt(i, series.length).toFixed(1)},${yAt(v).toFixed(1)}`).join(' L ');
-}
 
 export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
+  fields,
+  requests,
+  optimisedSchedule,
+  baselineSchedule,
   onRequestPickup,
 }) => {
-  const [selected, setSelected] = useState<Field | null>(FIELDS[3]);
+  const [selected, setSelected] = useState<Field | null>(fields[3] ?? fields[0] ?? null);
   const [cropF, setCropF] = useState<CropFilter>('all');
   const [statusF, setStatusF] = useState<StatusFilter>('all');
   const [urgencyHigh, setUrgencyHigh] = useState(false);
@@ -145,8 +148,78 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
     ...STACKED_HORIZON_BARS.map((b) => b.wheat + b.rice + b.mustard)
   );
 
-  const aiLine = buildLine(CUMULATIVE_SERIES.ai);
-  const baseLine = buildLine(CUMULATIVE_SERIES.baseline);
+  const optM = optimisedSchedule.metrics;
+  const baseM = baselineSchedule.metrics;
+
+  const costReductionPct =
+    baseM.avgCostPerTonne > 0
+      ? Math.round(((baseM.avgCostPerTonne - optM.avgCostPerTonne) / baseM.avgCostPerTonne) * 100)
+      : 0;
+
+  const liveComparisonMetrics = [
+    {
+      label: 'Residue scheduled (t)',
+      baseline: baseM.totalResidueScheduledT,
+      ai: optM.totalResidueScheduledT,
+      unit: 't',
+    },
+    {
+      label: 'Missed deadlines (fields)',
+      baseline: baseM.missedDeadlinesCount,
+      ai: optM.missedDeadlinesCount,
+      unit: '',
+    },
+    {
+      label: 'Avg cost (₹ / t)',
+      baseline: baseM.avgCostPerTonne,
+      ai: optM.avgCostPerTonne,
+      unit: '₹',
+    },
+    {
+      label: 'Deadline adherence (%)',
+      baseline: baseM.deadlineAdherencePct,
+      ai: optM.deadlineAdherencePct,
+      unit: '%',
+    },
+  ];
+
+  // Build cumulative series dynamically from actual assignments
+  const cumulativeData = useMemo(() => {
+    const days = Array.from(
+      new Set([
+        ...optimisedSchedule.assignments.map((a) => a.dateIso),
+        ...baselineSchedule.assignments.map((a) => a.dateIso),
+      ])
+    ).sort();
+    if (days.length < 2) {
+      return { ai: [0, optM.totalResidueScheduledT], base: [0, baseM.totalResidueScheduledT] };
+    }
+    let aiSum = 0;
+    let baseSum = 0;
+    const aiSeries: number[] = [];
+    const baseSeries: number[] = [];
+    for (const d of days) {
+      aiSum += optimisedSchedule.assignments
+        .filter((a) => a.dateIso === d)
+        .reduce((s, a) => s + a.tons, 0);
+      baseSum += baselineSchedule.assignments
+        .filter((a) => a.dateIso === d)
+        .reduce((s, a) => s + a.tons, 0);
+      aiSeries.push(Math.round(aiSum * 10) / 10);
+      baseSeries.push(Math.round(baseSum * 10) / 10);
+    }
+    return { ai: aiSeries, base: baseSeries };
+  }, [optimisedSchedule, baselineSchedule, optM.totalResidueScheduledT, baseM.totalResidueScheduledT]);
+
+  const maxCum = Math.max(10, ...cumulativeData.ai, ...cumulativeData.base);
+  const yAtDyn = (v: number) => H - PAD_B - (v / maxCum) * (H - PAD_T - PAD_B);
+  const buildDynLine = (series: number[]) =>
+    'M ' +
+    series
+      .map((v, i) => `${xAt(i, Math.max(2, series.length)).toFixed(1)},${yAtDyn(v).toFixed(1)}`)
+      .join(' L ');
+  const aiLine = buildDynLine(cumulativeData.ai);
+  const baseLine = buildDynLine(cumulativeData.base);
 
   return (
     <section id="map" className="max-w-[1180px] mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -297,7 +370,7 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
 
                   {/* Clickable Field Polygons */}
                   {layers.fields &&
-                    FIELDS.map((f, idx) => {
+                    fields.map((f, idx) => {
                       const meta = STATUS_META[f.status];
                       const dim = !passes(f);
                       const isSel = selected?.id === f.id;
@@ -439,6 +512,8 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                           crop: selected.crop,
                           area: selected.areaHa,
                           estimateT: selected.residueT,
+                          harvest: selected.harvestDate,
+                          pickup: selected.preferredCollectionDate,
                         })
                       }
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#D9F99D] hover:bg-[#A3E635] text-[#1A2E12] text-[11.5px] font-bold transition-colors cursor-pointer"
@@ -451,7 +526,7 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
               ) : (
                 <div className="mt-3.5 rounded-[18px] bg-[#2B2D2A] border border-white/10 px-4 py-3 text-[12px] text-[#A4A6A0] flex items-center justify-between">
                   <span>Tap any field polygon on the map to inspect residue & schedule window.</span>
-                  <span className="font-mono text-[#D9F99D] font-semibold shrink-0 ml-2">13 parcels</span>
+                  <span className="font-mono text-[#D9F99D] font-semibold shrink-0 ml-2">{fields.length} parcels</span>
                 </div>
               )}
             </div>
@@ -461,16 +536,16 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
               <div className="flex items-center justify-between text-[11px] text-[#9A9C96] mb-2.5">
                 <span>
                   Operations Dashboard · Registered:{' '}
-                  <strong className="font-mono text-white">1,284 fields</strong>
+                  <strong className="font-mono text-white">{fields.length} fields</strong>
                 </span>
                 <span>
-                  Utilisation: <strong className="font-mono text-[#D9F99D]">74%</strong>
+                  Utilisation: <strong className="font-mono text-[#D9F99D]">{optM.machineryUtilisationPct}%</strong>
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
                 <div className="rounded-[18px] bg-[#D9F99D] text-[#1A2E12] p-3.5 sm:p-4">
                   <div className="text-[17px] sm:text-[20px] font-bold leading-tight">
-                    <CountUp value={9860} suffix=" t" active={inView} />
+                    <CountUp value={Math.round(optM.totalResidueAvailableT)} suffix=" t" active={inView} />
                   </div>
                   <div className="text-[10.5px] text-[#284D16] mt-1 font-semibold">
                     Residue available
@@ -478,7 +553,7 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                 </div>
                 <div className="rounded-[18px] bg-[#FCEAB6] text-[#1A1B19] p-3.5 sm:p-4">
                   <div className="text-[17px] sm:text-[20px] font-bold leading-tight">
-                    <CountUp value={143} active={inView} />
+                    <CountUp value={requests.length} active={inView} />
                   </div>
                   <div className="text-[10.5px] text-[#5B4D25] mt-1 font-semibold">
                     Recovery requests
@@ -486,10 +561,10 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                 </div>
                 <div className="rounded-[18px] bg-white text-[#1A1B19] p-3.5 sm:p-4">
                   <div className="text-[17px] sm:text-[20px] font-bold leading-tight">
-                    <CountUp value={2410} suffix=" t" active={inView} />
+                    <CountUp value={Math.round(optM.totalResidueScheduledT)} suffix=" t" active={inView} />
                   </div>
                   <div className="text-[10.5px] text-[#6C6E6A] mt-1 font-semibold">
-                    Scheduled (7 days)
+                    Scheduled ({optM.assignedFieldsCount} fields)
                   </div>
                 </div>
               </div>
@@ -539,18 +614,18 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                 <div className="grid grid-cols-3 gap-3 pb-5 mb-5 border-b border-[#EFECE4]">
                   <div className="border-l-[2.5px] border-[#84CC16] pl-3">
                     <div className="text-[10.5px] text-[#787A74] leading-tight">
-                      AI-scheduled recovery (sim.)
+                      Scheduled recovery (sim.)
                     </div>
                     <div className="font-mono text-[19px] sm:text-[22px] font-bold text-[#1A1B19] mt-1 tabular-nums">
-                      7,450 t
+                      {optM.totalResidueScheduledT} t
                     </div>
                   </div>
                   <div className="border-l-2 border-[#EAB308] pl-3">
                     <div className="text-[10.5px] text-[#787A74] leading-tight">
-                      Operating cost reduction
+                      Cost vs FCFS baseline
                     </div>
                     <div className="font-mono text-[19px] sm:text-[22px] font-bold text-[#4D7C0F] mt-1 tabular-nums">
-                      −23%
+                      {costReductionPct >= 0 ? `−${costReductionPct}%` : `+${Math.abs(costReductionPct)}%`}
                     </div>
                   </div>
                   <div className="border-l-2 border-[#D4D3CA] pl-3">
@@ -558,7 +633,7 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                       Deadline adherence (sim.)
                     </div>
                     <div className="font-mono text-[19px] sm:text-[22px] font-bold text-[#1A1B19] mt-1 tabular-nums">
-                      96%
+                      {optM.deadlineAdherencePct}%
                     </div>
                   </div>
                 </div>
@@ -624,12 +699,12 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                   </div>
                 )}
 
-                {/* TAB 2: Scheduling Comparison + Animated 30-day Cumulative Curve */}
+                {/* TAB 2: Scheduling Comparison + Animated Cumulative Curve */}
                 {tab === 'compare' && (
                   <div className="space-y-4">
                     <div className="space-y-2.5">
-                      {COMPARISON_METRICS.map((m) => {
-                        const max = Math.max(m.baseline, m.ai);
+                      {liveComparisonMetrics.map((m) => {
+                        const max = Math.max(1, m.baseline, m.ai);
                         return (
                           <div key={m.label}>
                             <div className="flex justify-between text-[11.5px] mb-1">
@@ -666,16 +741,16 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
 
                     <div className="pt-2 border-t border-[#EFECE4]">
                       <div className="text-[11px] font-semibold text-[#5C5E59] mb-1">
-                        30-day cumulative tonnes recovered (Reactive vs AI-scheduled)
+                        Cumulative tonnes scheduled (FCFS baseline vs Smart Optimiser)
                       </div>
                       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[125px]">
-                        {[0, 3500, 7450].map((v) => (
+                        {[0, Math.round(maxCum / 2), Math.round(maxCum)].map((v) => (
                           <line
                             key={v}
                             x1={PAD_L}
-                            y1={yAt(v)}
+                            y1={yAtDyn(v)}
                             x2={W - PAD_R}
-                            y2={yAt(v)}
+                            y2={yAtDyn(v)}
                             stroke="#EFECE4"
                             strokeWidth="1"
                           />
@@ -700,11 +775,14 @@ export const FieldIntelligenceBento: React.FC<FieldIntelligenceBentoProps> = ({
                           animate={{ pathLength: 1 }}
                           transition={{ duration: 1.1 }}
                         />
-                        <text x={xAt(10, 11) + 6} y={yAt(7450) + 4} fill="#365314" fontSize="10" fontWeight="700">
-                          7.4k t
-                        </text>
-                        <text x={xAt(10, 11) + 6} y={yAt(2100) + 4} fill="#787A74" fontSize="9.5" fontWeight="600">
-                          2.1k t
+                        <text
+                          x={xAt(cumulativeData.ai.length - 1, Math.max(2, cumulativeData.ai.length)) + 6}
+                          y={yAtDyn(cumulativeData.ai[cumulativeData.ai.length - 1] ?? 0) + 4}
+                          fill="#365314"
+                          fontSize="10"
+                          fontWeight="700"
+                        >
+                          {optM.totalResidueScheduledT} t
                         </text>
                       </svg>
                     </div>

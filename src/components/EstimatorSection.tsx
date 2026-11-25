@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
-import { Wheat, Ruler, CalendarDays, ArrowUpRight, Info } from 'lucide-react';
+import { Wheat, Ruler, CalendarDays, ArrowUpRight, Info, AlertCircle } from 'lucide-react';
 import { CROPS, VILLAGES, EDITORIAL_IMAGES, Crop } from '../data/paralicycleData';
+import { calculateResidueEstimate } from '../lib/residueEstimator';
 
 interface EstimatorSectionProps {
   onSubmitRequest: (prefill: {
@@ -9,20 +10,23 @@ interface EstimatorSectionProps {
     crop: Crop;
     area: number;
     estimateT: number;
+    harvest: string;
     pickup: string;
   }) => void;
 }
 
-function addDays(dateStr: string, days: number) {
-  const d = new Date(dateStr + 'T00:00:00');
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-}
+const RISK_STYLES = {
+  error: { bg: '#FEF2F0', border: '#F7C9C1', text: '#B93822' },
+  info: { bg: '#F0F6FE', border: '#C9DDFB', text: '#285B9E' },
+  optimal: { bg: '#E8F7D4', border: '#BCE48F', text: '#284D16' },
+  warning: { bg: '#FEF7E6', border: '#F7DDA1', text: '#8D5F08' },
+  critical: { bg: '#FEF2F0', border: '#F7C9C1', text: '#B93822' },
+} as const;
 
 export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequest }) => {
   const [village, setVillage] = useState(VILLAGES[2].name);
   const [crop, setCrop] = useState<Crop>('wheat');
-  const [area, setArea] = useState(12);
+  const [areaInput, setAreaInput] = useState('12');
   const [harvest, setHarvest] = useState('2026-11-01');
   const [pickup, setPickup] = useState('2026-11-09');
 
@@ -34,61 +38,18 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
   const leftThumbY = useTransform(introScroll, [0, 1], [-14, 18]);
   const rightThumbY = useTransform(introScroll, [0, 1], [18, -18]);
 
+  const parsedArea = areaInput.trim() === '' ? 0 : Number(areaInput);
   const c = CROPS[crop];
-  const estimate = Math.round(area * c.factor * 10) / 10;
-  const low = Math.round(area * c.min * 10) / 10;
-  const high = Math.round(area * c.max * 10) / 10;
-  const winStart = addDays(harvest, c.window[0]);
-  const winEnd = addDays(harvest, c.window[1]);
+  const est = calculateResidueEstimate({
+    crop,
+    areaHa: parsedArea,
+    harvestDate: harvest,
+    preferredCollectionDate: pickup,
+  });
 
-  const daysToPickup = Math.round(
-    (new Date(pickup + 'T00:00:00').getTime() - new Date(harvest + 'T00:00:00').getTime()) / 86400000
-  );
-
-  let risk: { label: string; bg: string; border: string; text: string; note: string };
-  if (daysToPickup < 0) {
-    risk = {
-      label: 'Invalid dates',
-      bg: '#FEF2F0',
-      border: '#F7C9C1',
-      text: '#B93822',
-      note: 'Preferred collection date must be after the harvest date.',
-    };
-  } else if (daysToPickup < c.window[0] - 2) {
-    risk = {
-      label: 'Early moisture window',
-      bg: '#F0F6FE',
-      border: '#C9DDFB',
-      text: '#285B9E',
-      note: `Stubble may still hold high moisture. Recommended recovery window opens ${winStart}.`,
-    };
-  } else if (daysToPickup <= c.window[1]) {
-    risk = {
-      label: 'Optimal recovery window',
-      bg: '#E8F7D4',
-      border: '#BCE48F',
-      text: '#284D16',
-      note: 'Collection falls inside the recommended window — ideal baling moisture and low burn probability.',
-    };
-  } else if (daysToPickup <= c.window[1] + 5) {
-    risk = {
-      label: 'Elevated burn risk',
-      bg: '#FEF7E6',
-      border: '#F7DDA1',
-      text: '#8D5F08',
-      note: `Past the ${winEnd} window end. Residue is drying quickly — prioritise baler dispatch.`,
-    };
-  } else {
-    risk = {
-      label: 'High burn risk',
-      bg: '#FEF2F0',
-      border: '#F7C9C1',
-      text: '#B93822',
-      note: 'Well beyond the optimal window — this field enters the P1 urgent triage queue.',
-    };
-  }
-
-  const fill = ((area - 1) / (50 - 1)) * 100;
+  const riskStyle = RISK_STYLES[est.riskTone];
+  const clampedArea = Math.min(50, Math.max(1, Number.isFinite(parsedArea) ? parsedArea : 1));
+  const fill = ((clampedArea - 1) / (50 - 1)) * 100;
 
   return (
     <section id="estimator" className="max-w-[1180px] mx-auto px-4 sm:px-6 py-12 sm:py-16">
@@ -244,53 +205,63 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2.5">
-              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A]">
+            <div className="flex items-center justify-between mb-2.5 gap-3">
+              <label htmlFor="estimator-area-number" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A]">
                 <Ruler className="w-3.5 h-3.5 text-[#65A30D]" />
-                Field area
+                Field area (ha)
               </label>
-              <span className="font-mono px-3 py-0.5 rounded-full bg-[#D9F99D] text-[#1A2E12] text-[13px] font-semibold tabular-nums">
-                {area.toFixed(1)} ha
-              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  id="estimator-area-number"
+                  type="number"
+                  step={0.5}
+                  value={areaInput}
+                  onChange={(e) => setAreaInput(e.target.value)}
+                  aria-label="Field area in hectares"
+                  className="font-mono w-24 px-3 py-1 rounded-full bg-[#D9F99D] text-[#1A2E12] text-[13px] font-semibold tabular-nums text-right outline-none border border-[#BEF264] focus:border-[#4D7C0F]"
+                />
+                <span className="font-mono text-[12px] font-semibold text-[#5C5E59]">ha</span>
+              </div>
             </div>
             <input
               type="range"
               min={1}
               max={50}
               step={0.5}
-              value={area}
-              onChange={(e) => setArea(parseFloat(e.target.value))}
+              value={clampedArea}
+              onChange={(e) => setAreaInput(e.target.value)}
+              aria-label="Field area slider"
               className="pc-range"
               style={{ '--fill': `${fill}%` } as React.CSSProperties}
             />
             <div className="flex justify-between font-mono text-[11px] text-[#8A8C86] mt-1.5">
               <span>1 ha</span>
               <span>25 ha</span>
-              <span>50 ha</span>
+              <span>50+ ha (type above up to 250)</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A] mb-2">
+              <label htmlFor="estimator-harvest-date" className="block text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A] mb-2">
                 Harvest date
               </label>
               <input
+                id="estimator-harvest-date"
                 type="date"
                 value={harvest}
-                max={pickup}
                 onChange={(e) => setHarvest(e.target.value)}
                 className="font-mono w-full px-4 py-2.5 rounded-2xl bg-[#F8F9F4] border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[13.5px] font-medium text-[#1A1B19]"
               />
             </div>
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A] mb-2">
+              <label htmlFor="estimator-pickup-date" className="block text-[11px] font-bold uppercase tracking-[0.09em] text-[#6C6E6A] mb-2">
                 Preferred collection date
               </label>
               <input
+                id="estimator-pickup-date"
                 type="date"
                 value={pickup}
-                min={harvest}
                 onChange={(e) => setPickup(e.target.value)}
                 className="font-mono w-full px-4 py-2.5 rounded-2xl bg-[#F8F9F4] border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[13.5px] font-medium text-[#1A1B19]"
               />
@@ -307,12 +278,27 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
           className="lg:col-span-5 rounded-[24px] bg-[#F1F4EA] border border-[#DFE4D4] p-6 sm:p-8 flex flex-col justify-between"
         >
           <div>
-            <div className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#4D7C0F] mb-3">
-              Simulated Recovery Output
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#4D7C0F]">
+                Simulated Recovery Output
+              </div>
+              {est.valid && (
+                <span
+                  className={`font-mono px-2.5 py-0.5 rounded-full text-[10.5px] font-bold ${
+                    est.priority === 'P1'
+                      ? 'bg-[#FDECE9] text-[#B93822]'
+                      : est.priority === 'P2'
+                        ? 'bg-[#D9F99D] text-[#284D16]'
+                        : 'bg-[#E5E4DC] text-[#52544F]'
+                  }`}
+                >
+                  Priority {est.priority}
+                </span>
+              )}
             </div>
 
             <motion.div
-              key={estimate}
+              key={est.estimatedResidueT}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}
@@ -320,14 +306,14 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
             >
               <div className="flex items-baseline gap-2">
                 <span className="font-mono text-[44px] sm:text-[50px] font-semibold text-[#1A1B19] leading-none tabular-nums tracking-tight">
-                  {estimate}
+                  {est.estimatedResidueT}
                 </span>
                 <span className="text-[17px] font-semibold text-[#6C6E6A]">tonnes</span>
               </div>
               <div className="text-[13px] text-[#5C5E59] mt-2">
                 Availability range:{' '}
                 <strong className="font-mono text-[#1A1B19] tabular-nums">
-                  {low} – {high} t
+                  {est.availabilityRange[0]} – {est.availabilityRange[1]} t
                 </strong>
               </div>
             </motion.div>
@@ -341,7 +327,7 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
                 <CalendarDays className="w-4 h-4 text-[#284D16]" />
               </div>
               <div className="font-mono text-[18px] font-semibold text-[#1A2E12] tabular-nums">
-                {winStart} – {winEnd}
+                {est.winStartLabel} – {est.winEndLabel}
               </div>
               <div className="text-[11.5px] text-[#365314] mt-0.5">
                 {c.window[0]}–{c.window[1]} days post-harvest for {c.label.toLowerCase()}
@@ -350,12 +336,13 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
 
             <div
               className="rounded-[18px] p-4 mb-5"
-              style={{ background: risk.bg, border: `1px solid ${risk.border}` }}
+              style={{ background: riskStyle.bg, border: `1px solid ${riskStyle.border}` }}
             >
-              <div className="text-[13px] font-bold mb-0.5" style={{ color: risk.text }}>
-                {risk.label}
+              <div className="flex items-center gap-1.5 text-[13px] font-bold mb-0.5" style={{ color: riskStyle.text }}>
+                {!est.valid && <AlertCircle className="w-4 h-4 shrink-0" />}
+                {est.riskLabel}
               </div>
-              <p className="text-[12px] text-[#4C4E4A] leading-relaxed">{risk.note}</p>
+              <p className="text-[12px] text-[#4C4E4A] leading-relaxed">{est.riskNote}</p>
             </div>
           </div>
 
@@ -369,8 +356,19 @@ export const EstimatorSection: React.FC<EstimatorSectionProps> = ({ onSubmitRequ
             </div>
 
             <button
-              onClick={() => onSubmitRequest({ village, crop, area, estimateT: estimate, pickup })}
-              className="group w-full inline-flex items-center justify-center cursor-pointer"
+              type="button"
+              disabled={!est.valid}
+              onClick={() =>
+                onSubmitRequest({
+                  village,
+                  crop,
+                  area: parsedArea,
+                  estimateT: est.estimatedResidueT,
+                  harvest,
+                  pickup,
+                })
+              }
+              className="group w-full inline-flex items-center justify-center cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
             >
               <span className="flex-1 py-3.5 px-6 rounded-full bg-[#1C1D1B] group-hover:bg-[#365314] text-white text-[13.5px] font-semibold transition-colors text-center">
                 Submit recovery request

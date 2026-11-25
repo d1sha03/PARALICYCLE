@@ -5,12 +5,25 @@ import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { EstimatorSection } from './components/EstimatorSection';
 import { FieldIntelligenceBento } from './components/FieldIntelligenceBento';
+import { RecoveryRequestsSection } from './components/RecoveryRequestsSection';
 import { MachinerySection } from './components/MachinerySection';
 import { HowItWorksSection } from './components/HowItWorksSection';
 import { CtaFooter } from './components/CtaFooter';
 import { RecoveryRequestModal, RequestPrefill } from './components/RecoveryRequestModal';
+import {
+  AppStateSnapshot,
+  createRecoveryRequest,
+  CreateRequestPayload,
+  deleteRecoveryRequest,
+  loadInitialState,
+  recomputeSchedules,
+  resetDemoState,
+  updateMachineStatus,
+} from './services/paralicycleService';
+import { MachineStatus } from './types/paralicycle';
 
 export function App() {
+  const [appState, setAppState] = useState<AppStateSnapshot>(() => loadInitialState());
   const [requestOpen, setRequestOpen] = useState(false);
   const [prefill, setPrefill] = useState<RequestPrefill | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -31,6 +44,30 @@ export function App() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const handleCreateRequest = (payload: CreateRequestPayload) => {
+    const result = createRecoveryRequest(appState, payload);
+    if (!result.error) {
+      setAppState(result.nextState);
+    }
+    return { createdRequest: result.createdRequest, error: result.error };
+  };
+
+  const handleDeleteRequest = (requestId: string) => {
+    setAppState((prev) => deleteRecoveryRequest(prev, requestId));
+  };
+
+  const handleToggleMachineStatus = (machineId: string, nextStatus: MachineStatus) => {
+    setAppState((prev) => updateMachineStatus(prev, machineId, nextStatus));
+  };
+
+  const handleRecompute = () => {
+    setAppState((prev) => recomputeSchedules(prev));
+  };
+
+  const handleResetDemo = () => {
+    setAppState(resetDemoState());
+  };
+
   return (
     <div className="min-h-screen bg-[#FBFBF6] text-[#1A1B19]">
       <Navbar onOpenRequest={() => openRequest()} />
@@ -43,9 +80,29 @@ export function App() {
 
         <EstimatorSection onSubmitRequest={(p) => openRequest(p)} />
 
-        <FieldIntelligenceBento onRequestPickup={(p) => openRequest(p)} />
+        <FieldIntelligenceBento
+          fields={appState.fields}
+          requests={appState.requests}
+          optimisedSchedule={appState.optimisedSchedule}
+          baselineSchedule={appState.baselineSchedule}
+          onRequestPickup={(p) => openRequest(p)}
+        />
 
-        <MachinerySection />
+        <RecoveryRequestsSection
+          requests={appState.requests}
+          optimisedSchedule={appState.optimisedSchedule}
+          onOpenNewRequest={() => openRequest()}
+          onDeleteRequest={handleDeleteRequest}
+          onResetDemo={handleResetDemo}
+        />
+
+        <MachinerySection
+          machinery={appState.machinery}
+          optimisedSchedule={appState.optimisedSchedule}
+          baselineSchedule={appState.baselineSchedule}
+          onToggleMachineStatus={handleToggleMachineStatus}
+          onRecompute={handleRecompute}
+        />
 
         <HowItWorksSection onStartRequest={() => openRequest()} />
       </main>
@@ -56,6 +113,7 @@ export function App() {
         isOpen={requestOpen}
         onClose={() => setRequestOpen(false)}
         prefill={prefill}
+        onCreateRequest={handleCreateRequest}
       />
 
       {/* Scroll-to-top button */}

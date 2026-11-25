@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, CheckCircle2, ArrowUpRight, Info } from 'lucide-react';
-import { VILLAGES, CROPS, Crop } from '../data/paralicycleData';
+import { X, CheckCircle2, ArrowUpRight, Info, AlertCircle } from 'lucide-react';
+import { VILLAGES, CROPS, Crop, RecoveryRequest } from '../data/paralicycleData';
+import { calculateResidueEstimate } from '../lib/residueEstimator';
+import { CreateRequestPayload } from '../services/paralicycleService';
 
 export interface RequestPrefill {
   village?: string;
   crop?: Crop;
   area?: number;
   estimateT?: number;
+  harvest?: string;
   pickup?: string;
 }
 
@@ -15,42 +18,88 @@ interface RecoveryRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
   prefill?: RequestPrefill | null;
+  onCreateRequest: (payload: CreateRequestPayload) => {
+    createdRequest?: RecoveryRequest;
+    error?: string;
+  };
 }
 
 export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
   isOpen,
   onClose,
   prefill,
+  onCreateRequest,
 }) => {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [village, setVillage] = useState(VILLAGES[0].name);
   const [crop, setCrop] = useState<Crop>('wheat');
   const [area, setArea] = useState('12');
+  const [harvest, setHarvest] = useState('2026-11-01');
   const [pickup, setPickup] = useState('2026-11-10');
   const [notes, setNotes] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [created, setCreated] = useState<RecoveryRequest | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      setSubmitted(false);
+      setCreated(null);
+      setErrorMsg(null);
       if (prefill) {
         if (prefill.village) setVillage(prefill.village);
         if (prefill.crop) setCrop(prefill.crop);
-        if (prefill.area) setArea(String(prefill.area));
+        if (prefill.area !== undefined) setArea(String(prefill.area));
+        if (prefill.harvest) setHarvest(prefill.harvest);
         if (prefill.pickup) setPickup(prefill.pickup);
       }
     }
   }, [isOpen, prefill]);
 
+  const parsedArea = area.trim() === '' ? 0 : Number(area);
+  const liveEstimate = calculateResidueEstimate({
+    crop,
+    areaHa: parsedArea,
+    harvestDate: harvest,
+    preferredCollectionDate: pickup,
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !phone.trim()) return;
-    setSubmitted(true);
+    if (!name.trim()) {
+      setErrorMsg('Please enter a farmer or coordinator name.');
+      return;
+    }
+    if (!phone.trim() || phone.trim().length < 7) {
+      setErrorMsg('Please enter a valid contact phone number.');
+      return;
+    }
+    if (!liveEstimate.valid) {
+      setErrorMsg(liveEstimate.error ?? 'Please check parcel area and dates.');
+      return;
+    }
+
+    const res = onCreateRequest({
+      farmerName: name,
+      phone,
+      village,
+      crop,
+      areaHa: parsedArea,
+      harvestDate: harvest,
+      preferredCollectionDate: pickup,
+      notes,
+    });
+
+    if (res.error) {
+      setErrorMsg(res.error);
+      return;
+    }
+    setErrorMsg(null);
+    setCreated(res.createdRequest ?? null);
   };
 
   const resetAndClose = () => {
-    setSubmitted(false);
+    setCreated(null);
+    setErrorMsg(null);
     setName('');
     setPhone('');
     setNotes('');
@@ -83,27 +132,38 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
               <X className="w-4 h-4" />
             </button>
 
-            {!submitted ? (
+            {!created ? (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <span className="font-mono inline-block px-3 py-1 rounded-full bg-[#E8F7D4] border border-[#C6E89F] text-[#284D16] text-[10.5px] font-semibold tracking-wide uppercase mb-2.5">
-                    Recovery Request · Demo Queue
+                    Recovery Request · Simulated Queue
                   </span>
                   <h3 className="font-display text-[25px] font-bold text-[#1A1B19] leading-tight">
                     Start a Recovery Request
                   </h3>
                   <p className="text-[13px] text-[#6C6E6A] mt-1 leading-relaxed">
-                    Enter parcel details to preview how PARALICYCLE queues fields for baler
-                    dispatch. No real pickup is scheduled in this prototype.
+                    Submit parcel details into the local simulated queue and trigger immediate
+                    machinery scheduling.
                   </p>
                 </div>
 
+                {errorMsg && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2 rounded-2xl bg-[#FEF2F0] border border-[#F7C9C1] px-3.5 py-2.5 text-[12.5px] text-[#B93822]"
+                  >
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                    <label htmlFor="req-name" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                       Name *
                     </label>
                     <input
+                      id="req-name"
                       type="text"
                       required
                       value={name}
@@ -113,25 +173,27 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                    <label htmlFor="req-phone" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                       Phone *
                     </label>
                     <input
+                      id="req-phone"
                       type="text"
                       required
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+91 …"
+                      placeholder="+91 98…"
                       className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[14px] text-[#1A1B19]"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                  <label htmlFor="req-village" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                     Village
                   </label>
                   <select
+                    id="req-village"
                     value={village}
                     onChange={(e) => setVillage(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[14px] text-[#1A1B19] cursor-pointer"
@@ -141,16 +203,16 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
                         {v.name} · {v.block}
                       </option>
                     ))}
-                    <option value="Other Punjab village">Other Punjab village</option>
                   </select>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                    <label htmlFor="req-crop" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                       Crop
                     </label>
                     <select
+                      id="req-crop"
                       value={crop}
                       onChange={(e) => setCrop(e.target.value as Crop)}
                       className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[14px] text-[#1A1B19] cursor-pointer"
@@ -163,12 +225,12 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                    <label htmlFor="req-area" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                       Field area (ha)
                     </label>
                     <input
+                      id="req-area"
                       type="number"
-                      min={0.5}
                       step={0.5}
                       value={area}
                       onChange={(e) => setArea(e.target.value)}
@@ -177,23 +239,51 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
-                    Preferred collection date
-                  </label>
-                  <input
-                    type="date"
-                    value={pickup}
-                    onChange={(e) => setPickup(e.target.value)}
-                    className="font-mono w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[14px] text-[#1A1B19]"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="req-harvest" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                      Harvest date
+                    </label>
+                    <input
+                      id="req-harvest"
+                      type="date"
+                      value={harvest}
+                      onChange={(e) => setHarvest(e.target.value)}
+                      className="font-mono w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[13.5px] text-[#1A1B19]"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="req-pickup" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                      Collection date
+                    </label>
+                    <input
+                      id="req-pickup"
+                      type="date"
+                      value={pickup}
+                      onChange={(e) => setPickup(e.target.value)}
+                      className="font-mono w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DFE4D5] focus:border-[#65A30D] outline-none text-[13.5px] text-[#1A1B19]"
+                    />
+                  </div>
                 </div>
 
+                {liveEstimate.valid && (
+                  <div className="rounded-2xl bg-[#E8F7D4] border border-[#C6E89F] px-4 py-2.5 flex items-center justify-between text-[12.5px]">
+                    <span className="text-[#284D16] font-medium">
+                      Est. residue: <strong className="font-mono">{liveEstimate.estimatedResidueT} t</strong>{' '}
+                      <span className="text-[#4D7C0F]">({liveEstimate.availabilityRange[0]}–{liveEstimate.availabilityRange[1]} t)</span>
+                    </span>
+                    <span className="font-mono font-bold text-[#1A2E12]">
+                      {liveEstimate.priority}
+                    </span>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
+                  <label htmlFor="req-notes" className="block text-[11px] font-bold uppercase tracking-[0.08em] text-[#6C6E6A] mb-1.5">
                     Notes (optional)
                   </label>
                   <textarea
+                    id="req-notes"
                     rows={2}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
@@ -216,7 +306,7 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
 
                 <p className="flex items-start gap-2 text-[11px] leading-relaxed text-[#6C7366]">
                   <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[#4D7C0F]" />
-                  Demo submission only — nothing is persisted and no physical machinery is booked.
+                  Simulated submission saved in browser storage only — no real machinery is booked.
                 </p>
               </form>
             ) : (
@@ -229,33 +319,28 @@ export const RecoveryRequestModal: React.FC<RecoveryRequestModalProps> = ({
                   <CheckCircle2 className="w-8 h-8" />
                 </div>
                 <h3 className="font-display text-[23px] font-bold text-[#1A1B19]">
-                  Request queued, {name.split(' ')[0] || 'partner'}
+                  Request queued, {created.farmerName.split(' ')[0]}
                 </h3>
                 <p className="text-[13.5px] text-[#5C5E59] leading-relaxed max-w-[380px] mx-auto">
-                  Your <strong className="text-[#1A1B19]">{CROPS[crop].short.toLowerCase()}</strong>{' '}
-                  parcel of <strong className="font-mono text-[#1A1B19] tabular-nums">{area} ha</strong> in{' '}
-                  <strong className="text-[#1A1B19]">{village}</strong> was logged in the simulated
-                  triage queue for <strong className="font-mono text-[#1A1B19]">{pickup}</strong>.
-                  {prefill?.estimateT ? (
-                    <>
-                      {' '}
-                      Estimated tonnage:{' '}
-                      <strong className="font-mono text-[#3F6212] tabular-nums">
-                        {prefill.estimateT} t
-                      </strong>
-                      .
-                    </>
-                  ) : null}
+                  Your <strong className="text-[#1A1B19]">{CROPS[created.crop].short.toLowerCase()}</strong>{' '}
+                  parcel of <strong className="font-mono text-[#1A1B19] tabular-nums">{created.areaHa} ha</strong> in{' '}
+                  <strong className="text-[#1A1B19]">{created.village}</strong> was added to the
+                  recovery queue and scheduled for{' '}
+                  <strong className="font-mono text-[#1A1B19]">{created.preferredCollectionDate}</strong>.
+                  {' '}Estimated tonnage:{' '}
+                  <strong className="font-mono text-[#3F6212] tabular-nums">
+                    {created.estimatedResidueT} t
+                  </strong>.
                 </p>
                 <div className="font-mono inline-block px-4 py-1.5 rounded-full bg-[#E8F7D4] border border-[#C6E89F] text-[11px] font-semibold text-[#284D16] tracking-wider">
-                  DEMO REQUEST ID · RQ-1042
+                  REQUEST ID · {created.code} · {created.priority}
                 </div>
                 <div>
                   <button
                     onClick={resetAndClose}
                     className="px-7 py-3 rounded-full bg-[#1C1D1B] hover:bg-[#365314] text-white text-[13.5px] font-semibold transition-colors cursor-pointer"
                   >
-                    Done
+                    View in schedule & queue
                   </button>
                 </div>
               </motion.div>
